@@ -17,6 +17,7 @@ import {
 } from "./services/api";
 import { OpenIssue, Stream } from "./types/stream";
 import { useMetricsHistory } from "./hooks/useMetricsHistory";
+import { useUrlFilters } from "./hooks/useUrlFilters";
 
 type ViewMode = "dashboard" | "recipient";
 
@@ -41,7 +42,7 @@ function describeGlobalError(raw: string): string {
 
 function App() {
   const wallet = useFreighter();
-  const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
+  const { view: viewMode, filters, setView: setViewMode, setFilters } = useUrlFilters();
   const [streams, setStreams] = useState<Stream[]>([]);
   const [issues, setIssues] = useState<OpenIssue[]>([]);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -49,49 +50,30 @@ function App() {
   const [editingStream, setEditingStream] = useState<Stream | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(true);
 
-  async function refreshStreams(): Promise<void> {
-    const data = await listStreams();
-    setStreams(data);
+useEffect(() => {
+  let active = true;
+
+
+    }
   }
 
-  useEffect(() => {
-    let active = true;
+  void bootstrap();
 
-    async function bootstrap() {
-      try {
-        setLoadingDashboard(true);
-        // Artificial delay to show skeletons
-        await new Promise(r => setTimeout(r, 1000));
-
-        const [streamData, issueData] = await Promise.all([
-          listStreams(),
-          listOpenIssues(),
-        ]);
-        if (!active) return;
-        setStreams(streamData);
-        setIssues(issueData);
-      } catch (err) {
-        if (!active) return;
-        setGlobalError(
-          err instanceof Error
-            ? describeGlobalError(err.message)
-            : "Failed to load StellarStream data. Please refresh and try again.",
-        );
-      } finally {
-        if (active) setLoadingDashboard(false);
-      }
+  const timer = window.setInterval(async () => {
+    if (!active) return;
+    try {
+      const data = await listStreams(filters);
+      if (active) setStreams(data);
+    } catch {
+      // polling failures are silent — the global error covers bootstrap failures
     }
+  }, 5000);
 
-    void bootstrap();
-    const timer = window.setInterval(() => {
-      void refreshStreams();
-    }, 5000);
-
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, []);
+  return () => {
+    active = false;
+    window.clearInterval(timer);
+  };
+}, [filters]); 
 
   const metrics = useMemo(() => {
     const activeCount = streams.filter(
@@ -120,44 +102,42 @@ function App() {
     5000,
   );
 
-  async function handleCreate(
-    payload: Parameters<typeof createStream>[0],
-  ): Promise<void> {
-    setFormError(null);
-    setGlobalError(null);
-    try {
-      await createStream(payload);
-      await refreshStreams();
-    } catch (err) {
-      // Surface form/create errors inline in the form, not as a global banner
-      setFormError(
-        err instanceof Error ? err.message : "Failed to create stream.",
-      );
-    }
+async function handleCreate(payload: Parameters<typeof createStream>[0]): Promise<void> {
+  setFormError(null);
+  setGlobalError(null);
+  try {
+    await createStream(payload);
+    const data = await listStreams(filters);
+    setStreams(data);
+  } catch (err) {
+    setFormError(err instanceof Error ? err.message : "Failed to create stream.");
   }
+}
 
-  async function handleCancel(streamId: string): Promise<void> {
-    setGlobalError(null);
-    setFormError(null);
-    try {
-      await cancelStream(streamId);
-      await refreshStreams();
-    } catch (err) {
-      setGlobalError(
-        err instanceof Error
-          ? describeGlobalError(err.message)
-          : "Failed to cancel the stream. Please try again."
-      );
-    }
+async function handleCancel(streamId: string): Promise<void> {
+  setGlobalError(null);
+  setFormError(null);
+  try {
+    await cancelStream(streamId);
+    const data = await listStreams(filters);
+    setStreams(data);
+  } catch (err) {
+    setGlobalError(
+      err instanceof Error
+        ? describeGlobalError(err.message)
+        : "Failed to cancel the stream. Please try again.",
+    );
   }
+}
 
   async function handleUpdateStartTime(
-    streamId: string,
-    newStartAt: number,
-  ): Promise<void> {
-    await updateStreamStartAt(streamId, newStartAt);
-    await refreshStreams();
-  }
+  streamId: string,
+  newStartAt: number,
+): Promise<void> {
+  await updateStreamStartAt(streamId, newStartAt);
+  const data = await listStreams(filters); 
+  setStreams(data);
+}
 
   return (
     <div className="app-shell">
@@ -239,8 +219,13 @@ function App() {
       <section className="layout-grid">
         {/* formError is passed into the form so the create-stream card can show it inline */}
         <CreateStreamForm onCreate={handleCreate} apiError={formError} />
-        <StreamsTable streams={streams} onCancel={handleCancel}
-        onEditStartTime={(stream) => setEditingStream(stream)} />
+        <StreamsTable
+  streams={streams}
+  filters={filters}
+  onFiltersChange={setFilters}
+  onCancel={handleCancel}
+  onEditStartTime={(stream) => setEditingStream(stream)}
+/>
       </section>
 
       <IssueBacklog issues={issues} loading={loadingDashboard} />
